@@ -1,0 +1,26 @@
+{
+  "meta": {
+    "version": "1.0",
+    "updated": "2026-04-03",
+    "description": "施工单位资质数据库，用于招标信息邮件推送匹配。资质级别从高到低：特级 > 一级 > 二级 > 三级。\"以上\"要求表示满足该级别或更高等级。"
+  },
+  "companies": [
+    {
+      "name": "江苏八达路桥有限公司",
+      "email": "placeholder@example.com",
+      "qualifications": [
+        {"category": "公路工程施工总承包", "level": "二级"},
+        {"category": "公路路面工程专业承包", "level": "二级"},
+        {"category": "公路路基工程专业承包", "level": "二级"},
+        {"category": "市政公用工程施工总承包", "level": "一级"}
+      ]
+    },
+    {
+      "name": "常州达辉建设有限公司",
+      "email": "placeholder@example.com",
+      "qualifications": [
+        {"category": "建筑工程施工总承包", "level": "一级"}
+      ]
+    }
+  ]
+}

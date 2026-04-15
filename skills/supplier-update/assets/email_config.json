@@ -1,0 +1,15 @@
+{
+  "smtp": {
+    "server": "smtp.163.com",
+    "port": 465,
+    "email": "hxyseujs@163.com",
+    "app_password": "LNcNL3BJd9eEFJNF",
+    "use_ssl": true
+  },
+  "notification": {
+    "default_recipients": [
+      "52644253@qq.com"
+    ],
+    "subject_prefix": "[供应商更新]"
+  }
+}

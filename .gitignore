@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+
+# 临时输出文件（outputs 是运行产物，不进版本控制）
+skills/*/outputs/
+
+# 大文件
+*.mp3
+*.zip
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# OpenClaw
+.clawhub/
