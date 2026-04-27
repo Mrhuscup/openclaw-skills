@@ -14,7 +14,7 @@ TENCENT_FILE_ID = 'XvrbguxMdXjt'   # 腾讯文档表格 ID
 TENCENT_SHEET_ID = 'BB08J2'        # 腾讯文档子表 ID
 TENCENT_URL = 'https://docs.qq.com/sheet/DWHZyYmd1eE1kWGp0'
 OUT_DIR = '/workspace/skills/changzhou-bid-search/outputs'
-MAX_DAYS = 7                       # 保留近 N 天内的公告
+MAX_DAYS = 14                      # 保留近 N 天内的公告
 PERSISTENT_EXCEL = OUT_DIR + '/常州招标_持续积累.xlsx'
 
 # ── 日期工具 ────────────────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ def qq_read_all(mcporter_cmd='mcporter'):
             'start_row': 0,
             'start_col': 0,
             'end_row': 2000,  # 2000行 ≈ 200KB（接近 mcporter stdout 64KB 上限，但够用）
-            'end_col': 23,
+            'end_col': 24,
             'return_csv': True,
         })
     ]
@@ -99,6 +99,7 @@ def qq_read_all(mcporter_cmd='mcporter'):
         sid = row.get('标段编号', '').strip()
         # 跳过空行
         if not sid:
+            print(f'    [WARN] 跳过无标段编号行（CSV row {i+1}）')
             continue
         rows.append({
             'row_idx': i,           # 0-based（API 返回的 CSV row index = Excel row index）
@@ -114,8 +115,8 @@ def qq_sync(mcporter_cmd, local_items, dry_run=False):
     """
     将 local_items 与腾讯文档同步：
       - 读取当前文档全部 section_id
-      - 清理已过期项目（>7天，从文档+本地PDF删除）
-      - 合并保留项目（文档中≤7天的 + 本次新增的）
+      - 清理已过期项目（>14天，从文档+本地PDF删除）
+      - 合并保留项目（文档中≤14天的 + 本次新增的）
       - 全量重写（clear_range_cells + set_range_value，避免行定位问题）
     返回: (新增数, 删除数)
     """
@@ -170,49 +171,13 @@ def qq_sync(mcporter_cmd, local_items, dry_run=False):
         reverse=True
     )
 
-    # 构建 cells: row 0 = header, rows 1~N = data
+    # 表头定义（供下方 CSV 写入使用）
     headers = ['序号', '项目名称', '地区', '发布日期', '分类',
                '招标人', '招标代理', '建设地点', '建设内容',
-               '控制价(万元)', '评标办法', '资格审查',
-               '投标保证金', '工期', '计划开工', '计划竣工',
-               '资质要求', '项目负责人资质', '合同价格形式', '投标有效期',
+               '控制价(万元)', '评标办法', '评标基准价计算方法', '应扣除的专业工程暂估价',
+               '投标保证金', '工期', '计划开工', '开标时间',
+               '资质要求', '项目负责人资质', '企业或项目负责人业绩', '澄清截止时间',
                '履约担保', '联系方式', '标段编号', '来源']
-
-    cells = []
-    for ci, h in enumerate(headers):
-        cells.append({'row': 0, 'col': ci, 'value_type': 'STRING', 'string_value': h})
-
-    for ri_offset, it in enumerate(all_items):
-        row_num = ri_offset + 1   # 数据从 row 1 开始（row 0 是表头）
-        vals = [
-            str(ri_offset + 1),
-            it.get('project_name', '') or it.get('title', ''),
-            it.get('area', ''),
-            it.get('date', ''),
-            it.get('sub_cat', ''),
-            it.get('client', ''),
-            it.get('agent', ''),
-            it.get('site', ''),
-            (it.get('content', '') or '')[:300],   # 建设内容截断防超长
-            it.get('budget', ''),
-            it.get('bid_method', ''),
-            it.get('qual_check', ''),
-            it.get('deposit', ''),
-            it.get('duration', ''),
-            it.get('start_date', ''),
-            it.get('end_date', ''),
-            it.get('qual_req', ''),
-            it.get('pm_req', ''),
-            it.get('price_type', ''),
-            it.get('valid_period', ''),
-            it.get('perform_guarantee', ''),
-            it.get('contact', '') or it.get('agent_contact', ''),
-            it.get('section_id', ''),
-            '常州公共资源交易中心',
-        ]
-        for ci, v in enumerate(vals):
-            cells.append({'row': row_num, 'col': ci, 'value_type': 'STRING',
-                           'string_value': str(v)[:200]})
 
     # ── Step E: 全量清空 + CSV 写入（CSV 格式更稳定）────────────────────
     last_row = max(len(all_items), len(existing_map)) + 10
@@ -222,7 +187,7 @@ def qq_sync(mcporter_cmd, local_items, dry_run=False):
             mcporter_cmd, 'call', 'tencent-sheetengine', 'clear_range_cells',
             '--args', json.dumps({
                 'file_id': TENCENT_FILE_ID, 'sheet_id': TENCENT_SHEET_ID,
-                'start_row': 1, 'start_col': 0, 'end_row': last_row, 'end_col': 23,
+                'start_row': 1, 'start_col': 0, 'end_row': last_row, 'end_col': 24,
             })
         ], stderr=subprocess.DEVNULL, timeout=30)
 
@@ -243,15 +208,16 @@ def qq_sync(mcporter_cmd, local_items, dry_run=False):
                 (it.get('content', '') or '')[:300],
                 it.get('budget', ''),
                 it.get('bid_method', ''),
-                it.get('qual_check', ''),
+                it.get('基准价计算', ''),
+                it.get('provisional_estimate', ''),
                 it.get('deposit', ''),
                 it.get('duration', ''),
                 it.get('start_date', ''),
-                it.get('end_date', ''),
+                it.get('bid_opening_time', ''),
                 it.get('qual_req', ''),
                 it.get('pm_req', ''),
-                it.get('price_type', ''),
-                it.get('valid_period', ''),
+                it.get('performance_record', ''),
+                it.get('clarification_deadline', ''),
                 it.get('perform_guarantee', ''),
                 it.get('contact', '') or it.get('agent_contact', ''),
                 it.get('section_id', ''),
@@ -618,10 +584,23 @@ def extract_pdf_fields(pdf_path):
     m = re.search(r'计划开工日期[：:\s]*(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)', raw_text)
     if m:
         start_date = m.group(1).strip()
-    end_date = ''
-    m = re.search(r'计划竣工日期[：:\s]*(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)', raw_text)
+    bid_opening_time = ''
+    # 从7.1节提取"投标截止时间"（遇中文句号或换行停止，防止捕获尾部说明文字）
+    m = re.search(r'7\.1\s*投标截止时间为[：:\s]*([^\n。]{2,60})', raw_text)
     if m:
-        end_date = m.group(1).strip()
+        raw_val = m.group(1).strip()
+        # 归一化日期格式：统一为 YYYY-MM-DD HH:MM
+        date_val = re.sub(r'(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日', r'\1-\2-\3', raw_val)
+        date_val = re.sub(r'[/\.]', '-', date_val)
+        bid_opening_time = date_val
+    # 备用：从"开标时间"关键词提取
+    if not bid_opening_time:
+        m2 = re.search(r'开标时间[：:\s]*([^\n。]{2,60})', raw_text)
+        if m2:
+            raw_val = m2.group(1).strip()
+            date_val = re.sub(r'(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日', r'\1-\2-\3', raw_val)
+            date_val = re.sub(r'[/\.]', '-', date_val)
+            bid_opening_time = date_val
 
     # ── 13. 投标人资质 ─────────────────────────────────────────────────
     qual_req = _between(raw_text, r'3\.1\s*投标人资质类别和等级[：:\s*]', r'\n\s*3\.2', 120)
@@ -760,6 +739,15 @@ def extract_pdf_fields(pdf_path):
         if eval_detail:
             bid_method = f'{bid_method}，{eval_detail}'
 
+        # 综合评估法：追加7.3.2节推荐中标候选人数量
+        if '☑综合评估法' in raw_text or '☑综合评估法' in text_sp or '☑评定分离' in raw_text:
+            # 从7.3.2节提取推荐中标候选人数量
+            m_cand = re.search(r'7\.3\.2[^\d]*?(\d+)\s*[名和人]', raw_text)
+            if not m_cand:
+                m_cand = re.search(r'推荐中标候选人[^\d]*?(\d+)\s*[名和人]', raw_text)
+            if m_cand:
+                bid_method = f'{bid_method}（{m_cand.group(1)}名）'
+
     # ── 15b. 评标基准价计算方法 ────────────────────────────────────────
     # 从 2.3.2 评标基准价计算 方法 一节提取
     # 格式：ABC合成法，K（95%-98%），下浮率Δ（6%-12%）
@@ -848,18 +836,28 @@ def extract_pdf_fields(pdf_path):
         parts.append(f"下浮率Δ（{delta_range if delta_range else '/'}）")
         基准价计算 = '，'.join(parts)
 
-    # ── 16. 资格审查 ───────────────────────────────────────────────────
-    qual_check = ''
-    # "采用资格后审" 直接描述资格审查方式，最可靠
-    if re.search(r'采用\s*资格后审', raw_text):
-        qual_check = '资格后审'
-    elif re.search(r'采用\s*资格预审', raw_text):
-        qual_check = '资格预审'
-    # 备用：PDF checkbox（U+2611 = ☑）
-    elif re.search(r'\u2611\s*资格后审', raw_text):
-        qual_check = '资格后审'
-    elif re.search(r'\u2611\s*资格预审', raw_text):
-        qual_check = '资格预审'
+    # ── 16. 应扣除的专业工程暂估价（含税金）─────────────────────────────
+    # 方法五时从2.3.2节末段提取"应扣除的专业工程暂估价（含税金）为 X"
+    # 否则填 "/"
+    provisional_estimate = '/'
+    if method_key == '方法五':
+        # 允许关键词之间有任意空格/间隙
+        m_pe = re.search(
+            r'应扣除\s*的\s*专业\s*工程\s*暂 \s*估价 \s*（?\s*含\s*税\s*金\s*）?\s*为\s*(\S+?)(?:\s|$|万元)',
+            raw_text
+        )
+        if m_pe:
+            val = m_pe.group(1).strip()
+            # 清理尾部符号
+            val = re.sub(r'[，。、/\s]+$', '', val)
+            if val.isdigit():
+                val = val + '万元'
+            provisional_estimate = val
+        else:
+            # 找不到则填 0万元
+            provisional_estimate = '0万元'
+
+    # ── 17. 投标保证金
 
     # ── 17. 投标保证金 ────────────────────────────────────────────────
     deposit = ''
@@ -886,18 +884,28 @@ def extract_pdf_fields(pdf_path):
             else:
                 bid_limit = val[:60]
 
-    # ── 19. 合同价格形式 ───────────────────────────────────────────────
-    price_type = ''
-    if '☑单价合同' in raw_text:
-        price_type = '单价合同'
-    elif '☑总价合同' in raw_text:
-        price_type = '总价合同'
+    # ── 19. 企业或项目负责人业绩 ─────────────────────────────────────────
+    # 从3.4节☑提取"企业或项目负责人业绩"
+    performance_record = ''
+    # 定位3.4节
+    sec_34 = raw_text.find('3.4')
+    if sec_34 >= 0:
+        chunk34 = raw_text[sec_34:sec_34 + 2000]
+        # 找☑企业或项目负责人业绩后面的内容
+        m_pr = re.search(r'☑\s*(?:企业|项目负责人)\s*(?:的\s*)?业绩[：:\s]*([^\n]{2,100})', chunk34)
+        if m_pr:
+            performance_record = m_pr.group(1).strip()[:150]
 
-    # ── 20. 投标有效期 ─────────────────────────────────────────────────
-    valid_period = ''
-    m = re.search(r'投标有效期\s+(\d+)\s*天', raw_text)
-    if m:
-        valid_period = m.group(1) + '天'
+    # ── 20. 澄清截止时间 ───────────────────────────────────────────────
+    # 从2.2.1节"投标人要求澄清招标文件的截止时间"提取
+    clarification_deadline = ''
+    m_cd = re.search(r'2\.2\.1[^\d]*?(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日[^\d]*?(\d{1,2})\s*[时:：]\s*(\d{1,2})', raw_text)
+    if m_cd:
+        clarification_deadline = f'{m_cd.group(1)}-{m_cd.group(2).zfill(2)}-{m_cd.group(3).zfill(2)} {m_cd.group(4)}:{m_cd.group(5).zfill(2)}'
+    if not clarification_deadline:
+        m_cd2 = re.search(r'2\.2\.1[^\d]*?(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})[^\d]*?(\d{1,2})\s*时', raw_text)
+        if m_cd2:
+            clarification_deadline = f'{m_cd2.group(1)}-{m_cd2.group(2).zfill(2)}-{m_cd2.group(3).zfill(2)} {m_cd2.group(4)}:00'
 
     # ── 21. 履约担保 ──────────────────────────────────────────────────
     perform_guarantee = ''
@@ -989,21 +997,21 @@ def extract_pdf_fields(pdf_path):
         'scope': scope,
         'duration': duration,
         'start_date': start_date,
-        'end_date': end_date,
+        'bid_opening_time': bid_opening_time,
         'qual_req': qual_req,
         'pm_req': pm_req,
         'bid_method': bid_method,
-        'qual_check': qual_check,
+        '基准价计算': 基准价计算,
+        'provisional_estimate': provisional_estimate,
         'deposit': deposit,
         'perform_guarantee': perform_guarantee,
-        'price_type': price_type,
-        'valid_period': valid_period,
+        'performance_record': performance_record,
+        'clarification_deadline': clarification_deadline,
         'payment': payment,
         'bid_deadline': bid_deadline,
         'contact': contact,
         'agent_contact': agent_contact,
         'joint_bid': joint_bid,
-        '基准价计算': 基准价计算,
         'eval_detail': eval_detail,
     }
 
@@ -1102,7 +1110,7 @@ def review_and_log_changelog(results, run_label=""):
     VALIDATION_FIELDS = [
         'budget', 'bid_method', '基准价计算', 'qual_check',
         'deposit', 'duration', 'qual_req', 'pm_req',
-        'price_type', 'valid_period', 'perform_guarantee',
+        'performance_record', 'clarification_deadline', 'perform_guarantee',
     ]
 
     report_lines = []
@@ -1256,9 +1264,9 @@ def write_persistent_excel(all_items):
     # 全局表头顺序
     headers = ['序号', '项目名称', '地区', '发布日期', '分类',
                '招标人', '招标代理', '建设地点', '建设内容',
-               '控制价(万元)', '评标办法', '评标基准价计算方法', '资格审查',
-               '投标保证金', '工期', '计划开工', '计划竣工',
-               '资质要求', '项目负责人资质', '合同价格形式', '投标有效期',
+               '控制价(万元)', '评标办法', '评标基准价计算方法', '应扣除的专业工程暂估价',
+               '投标保证金', '工期', '计划开工', '开标时间',
+               '资质要求', '项目负责人资质', '企业或项目负责人业绩', '澄清截止时间',
                '履约担保', '联系方式', '标段编号', '来源']
 
     # 写入 openpyxl
@@ -1295,15 +1303,15 @@ def write_persistent_excel(all_items):
             _fv(it, 'budget', '控制价(万元)'),
             _fv(it, 'bid_method', '评标办法'),
             _fv(it, '基准价计算', '评标基准价计算方法'),
-            _fv(it, 'qual_check', '资格审查'),
+            _fv(it, 'provisional_estimate', '应扣除的专业工程暂估价'),
             _fv(it, 'deposit', '投标保证金'),
             _fv(it, 'duration', '工期'),
             _fv(it, 'start_date', '计划开工'),
-            _fv(it, 'end_date', '计划竣工'),
+            _fv(it, 'bid_opening_time', '开标时间'),
             _fv(it, 'qual_req', '资质要求'),
             _fv(it, 'pm_req', '项目负责人资质'),
-            _fv(it, 'price_type', '合同价格形式'),
-            _fv(it, 'valid_period', '投标有效期'),
+            _fv(it, 'performance_record', '企业或项目负责人业绩'),
+            _fv(it, 'clarification_deadline', '澄清截止时间'),
             _fv(it, 'perform_guarantee', '履约担保'),
             _fv(it, 'contact', '联系方式') or _fv(it, 'agent_contact', ''),
             _fv(it, 'section_id', '标段编号'),
@@ -1368,8 +1376,8 @@ def merge_and_cleanup(new_items):
                 # 只覆盖空值；new_item 的 None/空 不覆盖 old 的有效值
                 if v and v not in ('', 'NULL', 'None') and (old.get(k) in (None, '', 'NULL', 'None') or k not in old):
                     old[k] = v
-            # 补齐 area/date/title 等列表页字段
-            for fk in ['area', 'date', 'title', 'uuid', 'sub_cat', 'project_name']:
+            # 补齐 title/uuid/sub_cat/project_name 等列表页字段（area 和 date 不再更新，保留原始发布日期）
+            for fk in ['title', 'uuid', 'sub_cat', 'project_name']:
                 if fk in it and it[fk] and it[fk] not in ('', 'NULL', 'None') and (old.get(fk) in (None, '', 'NULL', 'None') or fk not in old):
                     old[fk] = it[fk]
             # ── 统一 section_id / 标段编号 key ──────────────────────────────
@@ -1407,15 +1415,15 @@ def merge_and_cleanup(new_items):
             ('控制价(万元)',     'budget'),
             ('评标办法',         'bid_method'),
             ('评标基准价计算方法', '基准价计算'),
-            ('资格审查',        'qual_check'),
+            ('应扣除的专业工程暂估价', 'provisional_estimate'),
             ('投标保证金',      'deposit'),
             ('工期',            'duration'),
             ('计划开工',        'start_date'),
-            ('计划竣工',        'end_date'),
+            ('开标时间',        'bid_opening_time'),
             ('资质要求',        'qual_req'),
             ('项目负责人资质',   'pm_req'),
-            ('合同价格形式',    'price_type'),
-            ('投标有效期',      'valid_period'),
+            ('企业或项目负责人业绩', 'performance_record'),
+            ('澄清截止时间',    'clarification_deadline'),
             ('履约担保',        'perform_guarantee'),
             ('联系方式',        'contact'),
         ]:
@@ -1427,7 +1435,7 @@ def merge_and_cleanup(new_items):
             item['section_id'] = sid
             item['标段编号'] = sid
 
-    # 4. 过滤过期（以当天为基准，>7天删除）
+    # 4. 过滤过期（以当天为基准，>14天删除）
     #    注意：有 section_id 但 date 为 None 的历史遗留条目（网站端无日期）→ 保留（不因 date 丢失而误删）
     today = datetime.now().date()
     valid_items = []
@@ -1463,9 +1471,9 @@ def merge_and_cleanup(new_items):
 def make_xlsx(data, out_path):
     headers = ['序号', '项目名称', '地区', '发布日期', '分类',
                '招标人', '招标代理', '建设地点', '建设内容',
-               '控制价(万元)', '评标办法', '评标基准价计算方法', '资格审查',
-               '投标保证金', '工期', '计划开工', '计划竣工',
-               '资质要求', '项目负责人资质', '合同价格形式', '投标有效期',
+               '控制价(万元)', '评标办法', '评标基准价计算方法', '应扣除的专业工程暂估价',
+               '投标保证金', '工期', '计划开工', '开标时间',
+               '资质要求', '项目负责人资质', '企业或项目负责人业绩', '澄清截止时间',
                '履约担保', '联系方式', '标段编号', '来源']
     col_widths = [5, 40, 10, 12, 10,
                   24, 24, 24, 38,
@@ -1498,9 +1506,6 @@ def make_xlsx(data, out_path):
         return d.get(k_en) or (d.get(k_cn) if k_cn else '') or ''
 
     def row_fields(d, ri):
-        pdfs = d.get('pdfs', [])
-        pdf_list = '; '.join(p['name'] for p in pdfs) if pdfs else ''
-
         return [
             str(ri-1),
             _fv(d, 'project_name', '项目名称'),
@@ -1514,15 +1519,15 @@ def make_xlsx(data, out_path):
             _fv(d, 'budget', '控制价(万元)'),
             _fv(d, 'bid_method', '评标办法'),
             _fv(d, '基准价计算', '评标基准价计算方法'),
-            _fv(d, 'qual_check', '资格审查'),
+            _fv(d, 'provisional_estimate', '应扣除的专业工程暂估价'),
             _fv(d, 'deposit', '投标保证金'),
             _fv(d, 'duration', '工期'),
             _fv(d, 'start_date', '计划开工'),
-            _fv(d, 'end_date', '计划竣工'),
+            _fv(d, 'bid_opening_time', '开标时间'),
             _fv(d, 'qual_req', '资质要求'),
             _fv(d, 'pm_req', '项目负责人资质'),
-            _fv(d, 'price_type', '合同价格形式'),
-            _fv(d, 'valid_period', '投标有效期'),
+            _fv(d, 'performance_record', '企业或项目负责人业绩'),
+            _fv(d, 'clarification_deadline', '澄清截止时间'),
             _fv(d, 'perform_guarantee', '履约担保'),
             _fv(d, 'contact', '联系方式') or _fv(d, 'agent_contact', ''),
             _fv(d, 'section_id', '标段编号'),
@@ -1597,7 +1602,7 @@ def main():
     # ── 自动7天滑动窗口 ───────────────────────────────────────────────────
     today = datetime.now().strftime('%Y-%m-%d')
     week_ago = (datetime.now() - timedelta(days=MAX_DAYS)).strftime('%Y-%m-%d')
-    start = week_ago    # 始终抓近7天
+    start = week_ago    # 始终抓近14天
     end   = today
 
     cat_name = CATEGORIES.get(cat, cat)
@@ -1621,7 +1626,7 @@ def main():
         print('ERROR: 0 items. Website structure may have changed.')
         return
 
-    # 按日期窗口过滤（近7天）
+    # 按日期窗口过滤（近14天）
     filt = [x for x in items if x['date'] >= start and x['date'] <= end]
     # 按 cat 末3位过滤（列表页 category 参数无效，按 cat 实际类型筛选）
     filt = [x for x in filt if cat_matches_filter(x['cat'], cat)]
@@ -1684,10 +1689,10 @@ def main():
         time.sleep(1.0)
 
     # ── 自动复盘：核查字段提取质量并更新 changelog ──────────────────────────
-    review_and_log_changelog(results, run_label="第三次运行")
+    review_and_log_changelog(results, run_label=datetime.now().strftime('%m-%d %H:%M'))
 
     # ── Step 3: 持久Excel增量合并（去重+过期清理） ─────────────────────────
-    # 合并本地历史记录，删除>7天过期项及对应PDF，生成全量有效列表
+    # 合并本地历史记录，删除>14天过期项及对应PDF，生成全量有效列表
     merged_all = merge_and_cleanup(results)
 
     # 打印汇总（基于本次抓取的 items）
